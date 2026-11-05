@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  DefaultColorStyle, DefaultDashStyle, DefaultFillStyle, Editor, GeoShapeGeoStyle, TLShapeId,
+  DefaultColorStyle, DefaultDashStyle, DefaultFillStyle, Editor, GeoShapeGeoStyle, TLShape, TLShapeId,
   createShapeId, useEditor, useValue,
 } from 'tldraw'
-import { Action, actionsForSelection } from '../convert/converters'
+import { Action, actionsForFiles, actionsForSelection } from '../convert/converters'
+import { getAudioBlob } from '../media/AudioShape'
 import { openRadial } from '../convert/RadialMenu'
 import { isMind } from '../mindmap/MindNodeShape'
 import { openInfo } from '../info/ShapeInfo'
@@ -104,7 +105,13 @@ const styleGomos = (editor: Editor): Action[] => [
 export function mainGomos(editor: Editor, at: { x: number; y: number }): Action[] {
   const ids = editor.getSelectedShapeIds()
   const sub = (actions: Action[]) => openRadial({ ...at, actions: [back(editor, at), ...actions] })
+  const shapes = editor.getSelectedShapes()
+  const hasGroup = shapes.some((sh) => sh.type === 'group')
+  const media = shapes.length === 1 ? mediaGomos(editor, shapes[0], at) : null
   return [
+    ...(ids.length > 1 ? [{ id: 'group', icon: '▣', label: 'Agrupar', run: async () => { editor.markHistoryStoppingPoint('agrupar'); editor.groupShapes(ids) } }] : []),
+    ...(hasGroup ? [{ id: 'ungroup', icon: '⊟', label: 'Desagrupar', run: async () => { editor.markHistoryStoppingPoint('desagrupar'); editor.ungroupShapes(ids) } }] : []),
+    ...(media ? [{ id: 'media', icon: '🔁', label: 'Converter ▸', run: async () => media[0].run() }] : []),
     { id: 'info', icon: '✎', label: 'Nome / Obs', run: async () => openInfo(ids[0]) },
     { id: 'forma', icon: '⬟', label: 'Forma ▸', run: async () => sub(shapeGomos(editor)) },
     { id: 'cor', icon: '🎨', label: 'Cor', run: async () => openColorBar({ x: at.x, y: at.y + 130 }) },
@@ -120,28 +127,38 @@ export function mainGomos(editor: Editor, at: { x: number; y: number }): Action[
 const back = (editor: Editor, at: { x: number; y: number }): Action =>
   ({ id: 'voltar', icon: '↩', label: 'Voltar', run: async () => openRadial({ ...at, actions: mainGomos(editor, at) }) })
 
-/** Botão 🍊 que acompanha a seleção (funciona com toque, caneta e mouse) */
+/**
+ * Gomos no CLIQUE ESQUERDO: um clique simples (sem arrastar) numa figura abre o anel
+ * de gomos ali mesmo. Espera ~250 ms para não atrapalhar o duplo clique (editar texto).
+ */
 export function GomoButton() {
   const editor = useEditor()
-  const pos = useValue('gomo-pos', () => {
-    if (editor.getEditingShapeId() || !editor.getSelectedShapeIds().length) return null
-    if (!editor.isIn('select.idle')) return null // some enquanto arrasta/redimensiona
-    const b = editor.getSelectionRotatedScreenBounds()
-    const vp = editor.getViewportScreenBounds()
-    if (!b) return null
-    // mantém o botão sempre visível, mesmo com a figura na borda ou maior que a tela
-    return { x: Math.min(Math.max(b.maxX + vp.x + 18, vp.x + 24), vp.x + vp.w - 24), y: Math.min(Math.max(b.minY + vp.y - 18, vp.y + 60), vp.y + vp.h - 24) }
+  useEffect(() => {
+    const c = editor.getContainer()
+    let down: { x: number; y: number; t: number } | null = null
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const skip = (e: PointerEvent) =>
+      e.button !== 0 || !!(e.target as HTMLElement).closest?.('button, input, select, textarea, audio, video, a, [contenteditable="true"]')
+    const onDown = (e: PointerEvent) => {
+      clearTimeout(timer) // 2º clique = duplo clique → não abre
+      down = skip(e) ? null : { x: e.clientX, y: e.clientY, t: performance.now() }
+    }
+    const onUp = (e: PointerEvent) => {
+      const d = down; down = null
+      if (!d || editor.getCurrentToolId() !== 'select' || editor.getEditingShapeId()) return
+      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5 || performance.now() - d.t > 350) return // foi arraste
+      const hit = editor.getShapeAtPoint(editor.screenToPage({ x: e.clientX, y: e.clientY }), { hitInside: true, margin: 4 })
+      if (!hit || !editor.getSelectedShapeIds().length) return
+      const at = { x: e.clientX, y: e.clientY }
+      timer = setTimeout(() => {
+        if (!editor.getEditingShapeId() && editor.getSelectedShapeIds().length) openRadial({ ...at, actions: mainGomos(editor, at) })
+      }, 250)
+    }
+    c.addEventListener('pointerdown', onDown, true)
+    c.addEventListener('pointerup', onUp, true)
+    return () => { clearTimeout(timer); c.removeEventListener('pointerdown', onDown, true); c.removeEventListener('pointerup', onUp, true) }
   }, [editor])
-  if (!pos) return null
-  return (
-    <button title="Gomos (formas, cor, estilo, exportar…)" onPointerDown={(e) => e.stopPropagation()}
-      onClick={() => { const at = { x: pos.x, y: pos.y + 110 }; openRadial({ ...at, actions: mainGomos(editor, at) }) }}
-      style={{
-        position: 'fixed', left: pos.x - 16, top: pos.y - 16, width: 32, height: 32, borderRadius: 16, zIndex: 350,
-        border: 'none', background: '#ff922b', color: '#fff', fontSize: 16, cursor: 'pointer', pointerEvents: 'all',
-        boxShadow: '0 2px 8px rgba(0,0,0,.25)',
-      }}>🍊</button>
-  )
+  return null
 }
 
 /**
@@ -175,4 +192,24 @@ export function ColorSwap() {
       <span style={{ position: 'absolute', right: -6, top: -6, fontSize: 11 }}>⇄</span>
     </button>
   )
+}
+
+// ---------- conversão de mídia selecionada no quadro (áudio, vídeo, imagem) ----------
+function mediaGomos(editor: Editor, sh: TLShape, at: { x: number; y: number }): Action[] | null {
+  const getFile = async (): Promise<File | null> => {
+    if (sh.type === 'audio-card') {
+      const b = await getAudioBlob(sh as any); return b ? new File([b], (sh.props as any).name, { type: b.type }) : null
+    }
+    const asset = (sh.props as any).assetId && (editor.getAsset((sh.props as any).assetId) as any)
+    if (!asset?.props?.src) return null
+    const b = await (await fetch(asset.props.src)).blob()
+    return new File([b], asset.props.name || 'arquivo', { type: asset.props.mimeType || b.type })
+  }
+  if (!['audio-card', 'video', 'image'].includes(sh.type)) return null
+  // reaproveita o catálogo do conversor de arquivos
+  return [{ id: 'load', icon: '⏳', label: 'Carregar opções', run: async () => {
+    const f = await getFile(); if (!f) return alert('Arquivo não disponível neste aparelho')
+    const p = editor.getShapePageBounds(sh.id)!
+    openRadial({ ...at, actions: [back(editor, at), ...actionsForFiles(editor, [f], { x: p.maxX + 40, y: p.y }).filter((a) => a.id !== 'insert')] })
+  } }]
 }

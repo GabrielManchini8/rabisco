@@ -1,6 +1,7 @@
 import { Editor, VecLike, createShapeId, toRichText } from 'tldraw'
 import { importPdfToCanvas } from '../pdf/importPdf'
-import { openVoice } from '../voice/VoicePanel'
+import { isAudio, isImage, isPptx, isSheet, isVideo, mediaJob, normalizeMedia, pptxToText, spreadsheetToText } from '../convert/media'
+import { addAudioCard } from '../media/AudioShape'
 
 /**
  * Importador "canivete suíço". Funciona por arrastar-e-soltar, colar (Ctrl+V)
@@ -12,8 +13,9 @@ import { openVoice } from '../voice/VoicePanel'
  *  - outros                   → cartão de anexo com o nome do arquivo
  */
 export const ACCEPT = [
-  'application/pdf', 'image/*', 'video/*', 'audio/*',
-  '.md', '.markdown', '.txt', '.csv', '.json', '.html', '.js', '.ts', '.py', '.docx',
+  // aceita tudo: o que não tiver visualização vira um cartão de anexo
+  '*/*', 'application/pdf', 'image/*', 'video/*', 'audio/*', '.heic', '.heif', '.tif', '.tiff',
+  '.md', '.txt', '.csv', '.json', '.docx', '.xlsx', '.xls', '.ods', '.pptx',
 ].join(',')
 
 const TEXT_EXT = /\.(md|markdown|txt|csv|json|html?|js|ts|tsx|jsx|py|java|c|cpp|cs|go|rs|sql|ya?ml|xml|log)$/i
@@ -25,12 +27,20 @@ export function registerFileImporters(editor: Editor) {
     const native: File[] = []
     let p = point ?? editor.getViewportPageBounds().center
     for (const f of files) {
+      try {
       if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) await importPdfToCanvas(editor, f, p)
-      else if (f.type.startsWith('image/') || f.type.startsWith('video/')) native.push(f)
-      else if (f.type.startsWith('audio/')) openVoice({ mode: 'file', file: f, at: p }) // áudio solto → vira nota transcrita
+      // HEIC, TIFF, AVI, MKV, WMA… são convertidos para algo que o navegador mostra/toca
+      else if (isImage(f) || isVideo(f)) native.push(await normalizeMedia(f))
+      else if (isAudio(f)) await addAudioCard(editor, await normalizeMedia(f), p)
+      else if (isSheet(f)) addTextNote(editor, f.name, await spreadsheetToText(f), p)
+      else if (isPptx(f)) addTextNote(editor, f.name, await pptxToText(f), p)
       else if (/\.docx$/i.test(f.name)) addTextNote(editor, f.name, await docxToText(f), p)
       else if (f.type.startsWith('text/') || TEXT_EXT.test(f.name)) addTextNote(editor, f.name, await f.text(), p)
       else addTextNote(editor, f.name, `📎 ${f.name} (${Math.round(f.size / 1024)} KB) — formato ainda sem visualização`, p)
+      } catch (e) {
+        mediaJob.set(null)
+        addTextNote(editor, f.name, `⚠ Não consegui abrir este arquivo: ${(e as Error)?.message ?? String(e)}`, p)
+      }
       p = { x: p.x + 700, y: p.y } // lado a lado, sem sobrepor
     }
     if (native.length) await defaultFiles?.({ type: 'files', point: p, files: native })

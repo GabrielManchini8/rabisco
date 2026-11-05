@@ -9,14 +9,20 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@huggingface/transformers": "^3.8.1",
     "@supabase/supabase-js": "^2.45.0",
     "dexie": "^4.0.8",
+    "heic2any": "^0.0.4",
+    "jszip": "^3.10.2",
     "mammoth": "^1.13.0",
     "pdfjs-dist": "^4.6.82",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tldraw": "^3.4.0",
+    "xlsx": "^0.18.5",
     "y-indexeddb": "^9.0.12",
     "yjs": "^13.6.18"
   },

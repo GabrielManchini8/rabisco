@@ -2,6 +2,7 @@ import { Editor, TLShape, TLShapeId, toRichText } from 'tldraw'
 import * as pdfjs from 'pdfjs-dist'
 import { importPdfToCanvas } from '../pdf/importPdf'
 import { openVoice } from '../voice/VoicePanel'
+import { convertMedia, heicTo, isAudio, isHeic, isImage, isPptx, isSheet, isVideo, normalizeMedia, pptxToText, spreadsheetTo, spreadsheetToText } from './media'
 
 /**
  * Conversor local (nada sai do aparelho). Inspirado no fluxo
@@ -20,7 +21,10 @@ export function download(blob: Blob, name: string) {
 }
 const base = (n: string) => n.replace(/\.[^.]+$/, '')
 
-async function loadBitmap(src: Blob) { return await createImageBitmap(src) }
+async function loadBitmap(src: Blob) {
+  try { return await createImageBitmap(src) }
+  catch { return await createImageBitmap(await normalizeMedia(src as File)) } // HEIC, TIFF, PSD…
+}
 
 /** Re-encode via canvas: converte formato, redimensiona e REMOVE metadados (EXIF/GPS). */
 async function reencode(src: Blob, type: string, scale = 1, quality = 0.9) {
@@ -108,7 +112,8 @@ const isText = (f: File) => f.type.startsWith('text/') || /\.(md|markdown|txt)$/
 export function actionsForFiles(editor: Editor, files: File[], at: { x: number; y: number }): Action[] {
   const f = files[0], n = base(f.name), all = files
   const insert: Action = { id: 'insert', label: 'Pôr no quadro', icon: '⬇', run: async () => { await editor.putExternalContent({ type: 'files', files: all, point: at }) } }
-  if (all.every((x) => IMG.test(x.type))) return [insert,
+  if (all.every((x) => IMG.test(x.type) || isImage(x))) return [insert,
+    ...(all.some(isHeic) ? [{ id: 'heic-jpg', label: 'HEIC → JPG', icon: '📱', run: async () => { for (const x of all) download(await heicTo(x), base(x.name) + '.jpg') } }] : []),
     { id: 'png', label: 'PNG', icon: '🖼', run: async () => { for (const x of all) download(await reencode(x, 'image/png'), base(x.name) + '.png') } },
     { id: 'jpg', label: 'JPG', icon: '📷', run: async () => { for (const x of all) download(await reencode(x, 'image/jpeg'), base(x.name) + '.jpg') } },
     { id: 'webp', label: 'WEBP', icon: '🪶', run: async () => { for (const x of all) download(await reencode(x, 'image/webp', 1, 0.85), base(x.name) + '.webp') } },
@@ -123,10 +128,25 @@ export function actionsForFiles(editor: Editor, files: File[], at: { x: number; 
     { id: 'txt', label: 'Texto (.txt)', icon: '📝', run: async () => download(new Blob([await pdfToText(f)], { type: 'text/plain' }), n + '.txt') },
     { id: 'note', label: 'Texto → nota', icon: '🗒', run: async () => { editor.createShape({ type: 'text', x: at.x, y: at.y, props: { richText: toRichText(await pdfToText(f)), autoSize: false, w: 560, size: 's', font: 'sans', textAlign: 'start' } }) } },
   ]
-  if (f.type.startsWith('audio/') || f.type.startsWith('video/') || /\.(mp3|m4a|wav|ogg|opus|flac|mp4|mov|webm)$/i.test(f.name)) return [
-    ...(f.type.startsWith('video/') ? [insert] : []),
+  const conv = (to: Parameters<typeof convertMedia>[1], label: string, icon: string, outExt = to as string): Action =>
+    ({ id: 'cv-' + to, label, icon, run: async () => { for (const x of all) download(await convertMedia(x, to), base(x.name) + '.' + outExt) } })
+  if (isVideo(f)) return [insert,
+    conv('mp4', 'MP4', '🎞'), conv('mp4-small', 'MP4 leve', '📉', 'mp4'), conv('webm', 'WEBM', '🌐'), conv('gif', 'GIF', '🎡'),
+    conv('mp3', 'Extrair MP3', '🎵'), conv('thumb', 'Foto do 1º quadro', '📷', 'jpg'),
     { id: 'tr-note', label: 'Transcrever → nota', icon: '🎙', run: async () => openVoice({ mode: 'file', file: f, at }) },
-    { id: 'tr', label: 'Transcrever (TXT/SRT)', icon: '💬', run: async () => openVoice({ mode: 'file', file: f }) },
+  ]
+  if (isAudio(f)) return [insert,
+    conv('mp3', 'MP3', '🎵'), conv('wav', 'WAV', '〰'), conv('m4a', 'M4A', '🍏'), conv('ogg', 'OGG', '🔊'), conv('flac', 'FLAC', '💎'),
+    { id: 'tr-note', label: 'Transcrever → nota', icon: '🎙', run: async () => openVoice({ mode: 'file', file: await normalizeMedia(f), at }) },
+    { id: 'tr', label: 'Legenda SRT/TXT', icon: '💬', run: async () => openVoice({ mode: 'file', file: await normalizeMedia(f) }) },
+  ]
+  if (isSheet(f)) return [insert,
+    { id: 'csv', label: 'CSV', icon: '🧾', run: async () => download(await spreadsheetTo(f, 'csv'), n + '.csv') },
+    { id: 'xlsx', label: 'XLSX', icon: '📊', run: async () => download(await spreadsheetTo(f, 'xlsx'), n + '.xlsx') },
+    { id: 'md', label: 'Texto (.md)', icon: '📝', run: async () => download(new Blob([await spreadsheetToText(f)], { type: 'text/markdown' }), n + '.md') },
+  ]
+  if (isPptx(f)) return [insert,
+    { id: 'txt', label: 'Texto (.txt)', icon: '📝', run: async () => download(new Blob([await pptxToText(f)], { type: 'text/plain' }), n + '.txt') },
   ]
   if (isText(f)) return [insert,
     { id: 'html', label: 'HTML', icon: '🌐', run: async () => download(new Blob([mdToHtml(await f.text())], { type: 'text/html' }), n + '.html') },

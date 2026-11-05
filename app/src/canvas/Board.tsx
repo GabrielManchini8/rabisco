@@ -11,13 +11,15 @@ import { SearchPanel } from '../search/SearchPanel'
 import { SideRuler } from '../ruler/SideRuler'
 import { ConnectorLights } from '../mindmap/ConnectorLights'
 import { SyncButton } from '../sync/SyncButton'
+import { AudioCardUtil } from '../media/AudioShape'
+import { MediaProgress } from '../convert/MediaProgress'
 import { ExplainBar, replayVisibility } from '../explain/explain'
 import { InfoLabels, InfoPanel, registerAutoNames } from '../info/ShapeInfo'
 import { actionsForFiles, actionsForSelection } from '../convert/converters'
 import { MindNodeUtil, createMindMap, getShapeVisibility } from '../mindmap/MindNodeShape'
 import { MindNodeToolbar, registerMindMapKeys } from '../mindmap/MindMapUI'
 
-const shapeUtils = [MindNodeUtil]
+const shapeUtils = [MindNodeUtil, AudioCardUtil]
 
 /**
  * Caneta: o tldraw já usa PointerEvents com `pressure`, então Apple Pencil,
@@ -65,7 +67,7 @@ function Toolbar() {
 }
 
 function Overlays() {
-  return <><ConnectorLights /><InfoLabels /><MindNodeToolbar /><ZoomControls /><GomoButton /><ToolGomoButton /><ColorSwap /><ColorBar /><RadialMenu /><VoicePanel /><InfoPanel /><SearchPanel /><SideRuler /><SyncButton /><ExplainBar /></>
+  return <><ConnectorLights /><InfoLabels /><MindNodeToolbar /><ZoomControls /><GomoButton /><ToolGomoButton /><ColorSwap /><ColorBar /><RadialMenu /><VoicePanel /><InfoPanel /><SearchPanel /><SideRuler /><MediaProgress /><SyncButton /><ExplainBar /></>
 }
 
 export function Board({ documentId }: { documentId: string }) {

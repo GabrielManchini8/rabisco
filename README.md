@@ -15,6 +15,9 @@ Um canivete suíço para pensar: desenhe, escreva, importe arquivos, fale — tu
 - **Régua lateral** de organização: agrupar, frente/trás, alinhar, distribuir…
 - **Sync** entre dispositivos com Yjs (CRDT) + Supabase, estilo Joplin (ao abrir, ao fechar e no botão) ou em tempo real
 
+## Formatos
+Abre e converte dentro do app, sem internet: **HEIC/HEIF** (iPhone), TIFF, BMP, PSD, AVIF, WEBP…; áudio **MP3, WAV, M4A, AAC, OGG, OPUS, FLAC, WMA, AMR, AIFF**; vídeo **MP4, MOV, AVI, MKV, WMV, FLV, 3GP, WEBM, MPEG**; PDF, Word, Excel/ODS/CSV, PowerPoint, Markdown, texto e código. Conversões com ffmpeg.wasm e libheif, 100% locais.
+
 ## Rodar
 ```bash
 cd app

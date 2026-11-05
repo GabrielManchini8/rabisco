@@ -18,4 +18,7 @@ export default defineConfig({
   ],
   // Tauri/Capacitor carregam arquivos locais: caminhos relativos
   base: './',
+  // o ffmpeg.wasm cria o próprio worker; não pode ser pré-empacotado pelo Vite
+  optimizeDeps: { exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'] },
+  worker: { format: 'es' },
 })
