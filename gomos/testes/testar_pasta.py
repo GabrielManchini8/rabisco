@@ -1,6 +1,11 @@
 """Roda TODOS os gomos em todos os arquivos de uma pasta e mostra o que falhou.
 Uso:  python testes/testar_pasta.py C:\\caminho\\da\\pasta [senha_dos_pdfs]
 Usado com os acervos de teste github.com/py-pdf/sample-files e felixlimanta/sample-docx-repo."""
+import sys
+try:  # console do Windows (cp1252) não imprime ✓/✗
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 import sys, logging
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

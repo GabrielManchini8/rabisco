@@ -4,6 +4,11 @@ Não confia em "deu certo": abre cada arquivo gerado e confere o CONTEÚDO.
 Saída 0 = verde (tudo passou). Saída 1 = vermelho (lista o que falhou).
 Uso: python testes/portao.py
 """
+import sys
+try:  # console do Windows (cp1252) não imprime ✓/✗
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 import sys, tempfile, traceback, logging
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -19,22 +24,24 @@ def fixtures(d: Path) -> dict[str, Path]:
     # Excel
     wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Estoque"
     for r in LINHAS: ws.append(r)
-    wb.save(d / "planilha.xlsx")
+    wb.save(d / "planilha orçamento.xlsx")
     # Word com tabela
     doc = docx.Document(); doc.add_heading("Relatório", 1); doc.add_paragraph("Itens em estoque:")
     t = doc.add_table(rows=3, cols=3); t.style = "Table Grid"
     for i, r in enumerate(LINHAS):
         for j, v in enumerate(r): t.cell(i, j).text = str(v)
-    doc.save(d / "documento.docx")
+    doc.save(d / "relatório ação.docx")
     # PDF com tabela de verdade (gerado a partir de HTML)
     html = "<h1>Relatório</h1><table border=1>" + "".join("<tr>" + "".join(f"<td>{v}</td>" for v in r) + "</tr>" for r in LINHAS) + "</table>"
     story = pymupdf.Story(html=html, user_css="table{border-collapse:collapse} td{border:1px solid black;padding:4px}")
-    w = pymupdf.DocumentWriter(str(d / "tabela.pdf")); a4 = pymupdf.paper_rect("a4")
+    import io
+    buf = io.BytesIO(); w = pymupdf.DocumentWriter(buf); a4 = pymupdf.paper_rect("a4")
     dev = w.begin_page(a4); story.place(a4 + (50, 50, -50, -50)); story.draw(dev); w.end_page(); w.close()
+    (d / "tabela situação.pdf").write_bytes(buf.getvalue())
     # Imagem
     im = Image.new("RGB", (400, 240), "#ff922b"); ImageDraw.Draw(im).rectangle((40, 40, 360, 200), outline="white", width=8)
-    im.save(d / "foto.png")
-    return {"pdf": d / "tabela.pdf", "word": d / "documento.docx", "excel": d / "planilha.xlsx", "imagem": d / "foto.png"}
+    im.save(d / "foto câmera.png")
+    return {"pdf": d / "tabela situação.pdf", "word": d / "relatório ação.docx", "excel": d / "planilha orçamento.xlsx", "imagem": d / "foto câmera.png"}
 
 # ---------- verificadores: abrem o arquivo gerado e checam o conteúdo ----------
 def texto_pdf(p):
@@ -81,7 +88,7 @@ def caso_caracteres_invalidos(d: Path):
     import pymupdf
     doc = pymupdf.open(); pg = doc.new_page()
     pg.insert_text((72, 72), "Item\x0b com \x01controle", fontsize=12); pg.insert_text((72, 100), MARCA, fontsize=12)
-    src = d / "controle.pdf"; doc.save(src)
+    src = d / "situação controle.pdf"; src.write_bytes(doc.tobytes()); doc.close()
     out = c.pdf_excel(src)[0]
     return any(MARCA in x for x in celulas_xlsx(out))
 
