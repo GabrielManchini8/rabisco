@@ -4,9 +4,10 @@ Cada tipo de arquivo tem uma lista de "gomos" (ações). Cada ação gera arquiv
 novo(s) ao lado do original, sem nunca sobrescrever nada.
 """
 from __future__ import annotations
-import os, subprocess, json, csv, shutil, tempfile
+import os, subprocess, json, csv, shutil, tempfile, io, sys
 from pathlib import Path
 from typing import Callable
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # para achar ocr.py
 
 # ---------------------------------------------------------------- utilidades
 def livre(p: Path) -> Path:
@@ -440,6 +441,8 @@ def _numero(v):
     if not isinstance(v, str):
         return v
     t = v.strip().replace("R$", "").strip()
+    if t.isdigit() and (t.startswith("0") or len(t) >= 10):  # telefone, CPF, CEP: manter como texto
+        return t
     try:
         if t and t.replace(".", "").replace(",", "").replace("-", "").isdigit():
             if "," in t:
@@ -493,8 +496,22 @@ def pdf_excel(src: Path) -> list[Path]:
                 linhas = [re.split(r"\s{2,}|\t", l.strip()) for l in pg.get_text().splitlines() if l.strip()]
                 if linhas:
                     folhas.append((f"Pág {n}", linhas))
+    if not folhas:  # PDF escaneado: lê as páginas com OCR
+        try:
+            import ocr
+            from PIL import Image
+            with abrir_pdf(src) as doc:
+                for n, pg in enumerate(doc, 1):
+                    pix = pg.get_pixmap(dpi=200)
+                    linhas = ocr.ler_tabela(Image.open(io.BytesIO(pix.tobytes("png"))))
+                    if linhas:
+                        folhas.append((f"Pág {n}", linhas))
+            if folhas:
+                AVISOS.append(f"{src.name}: PDF escaneado lido por OCR — confira os valores")
+        except Exception as e:
+            AVISOS.append(f"{src.name}: PDF escaneado e OCR indisponível ({e})")
     if not folhas:
-        AVISOS.append(f"{src.name}: PDF sem texto (escaneado) — planilha vazia")
+        AVISOS.append(f"{src.name}: PDF sem texto legível — planilha vazia")
     dst = saida(src, "xlsx"); _salvar_xlsx(folhas, dst); return [dst]
 
 def _como_docx(src: Path) -> Path:
@@ -609,17 +626,38 @@ def img_word(src: Path) -> list[Path]:
     dst = saida(src, "docx"); d.save(dst); return [dst]
 
 def img_excel(src: Path) -> list[Path]:
-    """Imagem → Excel: a imagem inserida na planilha (célula A1), com o nome do arquivo."""
+    """Imagem → Excel: lê a tabela da imagem (OCR) e põe cada valor na sua célula.
+    A imagem original fica numa segunda aba para conferência."""
     import openpyxl
     from openpyxl.drawing.image import Image as XImg
     png = _png_temp(src)
-    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Imagem"
+    linhas = []
+    try:
+        import ocr
+        linhas = ocr.ler_tabela(_abrir_imagem(src))
+    except Exception as e:
+        AVISOS.append(f"{src.name}: não consegui ler o texto ({e}); a planilha tem só a imagem")
+    dst = saida(src, "xlsx")
+    if linhas:
+        _salvar_xlsx([("Dados", linhas)], dst)
+        wb = openpyxl.load_workbook(dst)
+        AVISOS.append(f"{src.name}: lido por OCR — confira e-mails, números e nomes antes de usar")
+    else:
+        wb = openpyxl.Workbook(); wb.remove(wb.active)
+        if not AVISOS or src.name not in AVISOS[-1]:
+            AVISOS.append(f"{src.name}: não encontrei texto na imagem; a planilha tem só a imagem")
+    ws = wb.create_sheet("Imagem original")
     ws["A1"] = src.name
     img = XImg(str(png))
-    if img.width > 900:  # cabe na tela
+    if img.width > 900:
         k = 900 / img.width; img.width, img.height = int(img.width * k), int(img.height * k)
     ws.add_image(img, "A2")
-    dst = saida(src, "xlsx"); wb.save(dst); return [dst]
+    wb.save(dst); return [dst]
+
+def img_texto(src: Path) -> list[Path]:
+    """Imagem → texto (OCR)."""
+    import ocr
+    dst = saida(src, "txt"); dst.write_text(ocr.ler_texto(_abrir_imagem(src)), encoding="utf-8"); return [dst]
 
 # ---------------------------------------------------------------- catálogo de gomos
 Gomo = tuple[str, str, Callable[[Path], list[Path]]]  # (ícone, rótulo, ação)
@@ -631,7 +669,7 @@ def gomos(p: Path) -> list[Gomo]:
         alvos = [("📷", "JPG", "jpg"), ("🖼", "PNG", "png"), ("🪶", "WEBP", "webp"), ("📱", "HEIC", "heic"), ("🗂", "TIFF", "tiff"),
                  ("🧱", "BMP", "bmp"), ("✨", "AVIF", "avif"), ("🎞", "GIF", "gif"), ("🔖", "ICO", "ico"), ("📄", "PDF", "pdf")]
         g = [(i, r, img_para(x)) for i, r, x in alvos if x != e and not (x == "jpg" and e in ("jpeg", "jfif")) and not (x == "tiff" and e == "tif")]
-        g += [("📘", "Word (DOCX)", img_word), ("📊", "Excel (XLSX)", img_excel)]
+        g += [("📘", "Word (DOCX)", img_word), ("📊", "Excel (XLSX)", img_excel), ("🔤", "Texto (OCR)", img_texto)]
         return g + [("↘", "Reduzir 50%", img_para("mesmo", 0.5, " - 50%")), ("🕶", "Sem metadados", img_para("mesmo", 1, " - limpo", limpar=True))]
     if t == "audio":
         g = [("🎵", "MP3", av("mp3")), ("〰", "WAV", av("wav")), ("🍏", "M4A", av("m4a")), ("🔊", "OGG", av("ogg")),

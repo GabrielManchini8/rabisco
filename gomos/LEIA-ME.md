@@ -13,7 +13,7 @@ Para remover: **desinstalar.bat**.
 ## O que converte (tudo local, sem internet)
 | Arquivo | Gomos |
 |---|---|
-| Fotos: JPG, PNG, WEBP, **HEIC**, TIFF, BMP, **AVIF**, GIF, ICO, PSD… | JPG, PNG, WEBP, HEIC, TIFF, BMP, AVIF, GIF, ICO, PDF, **Word**, **Excel**, Reduzir 50%, Sem metadados (remove GPS/câmera) |
+| Fotos: JPG, PNG, WEBP, **HEIC**, TIFF, BMP, **AVIF**, GIF, ICO, PSD… | JPG, PNG, WEBP, HEIC, TIFF, BMP, AVIF, GIF, ICO, PDF, **Word**, **Excel** (lê a tabela da imagem com OCR, célula por célula), **Texto (OCR)**, Reduzir 50%, Sem metadados (remove GPS/câmera) |
 | Áudio: MP3, WAV, M4A, AAC, OGG, OPUS, FLAC, **WMA**, AMR, AIFF… | MP3, WAV, M4A, OGG, OPUS, FLAC |
 | Vídeo: MP4, MOV, **AVI**, MKV, WMV, FLV, 3GP, WEBM, MPEG… | MP4, MP4 leve (WhatsApp), WEBM, MOV, AVI, MKV, GIF, Áudio MP3/WAV, 1º quadro |
 | PDF | **Remover senha** (se tiver), **Word (DOCX)** editável, **Excel (XLSX)** (tabelas viram abas), Páginas PNG/JPG, Texto, Comprimir, Dividir, Girar 90° |
@@ -39,3 +39,8 @@ O Gomos pede a senha na hora e oferece o gomo **Remover senha** (gera uma cópia
 ## Portão de qualidade
 `python testes/portao.py` gera arquivos de teste e confere, **abrindo cada resultado**, as conversões cruzadas
 PDF ⇄ Word ⇄ Excel ⇄ Imagem (o texto da tabela precisa chegar inteiro do outro lado). Saída 0 = tudo certo.
+
+### Imagem/print → Excel (OCR)
+Lê prints de planilhas, fotos de tabelas e PDFs escaneados e coloca **cada valor na sua célula** (OCR Tesseract, português, 100% local).
+Encontra as colunas mesmo sem linhas de grade, separa código+nome e telefone+e-mail grudados, corrige o "@" mal lido
+e mantém telefones/CPF como texto (sem perder o zero). A imagem original fica numa segunda aba para conferência.

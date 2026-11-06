@@ -30,6 +30,9 @@ Section "Gomos (obrigatório)" SecMain
   SetOutPath "$INSTDIR"
   RMDir /r "$INSTDIR\python"            ; atualização limpa
   File /r "rt\python"
+  RMDir /r "$INSTDIR\tesseract"
+  File /r "rt\tesseract"                ; OCR (ler texto de imagens e PDFs escaneados), com português
+  File "rt\ocr.py"
   File "rt\gomos.pyw" "rt\conversores.py" "rt\gomos.ico" "rt\baixar-wordcraft.ps1" "rt\LEIA-ME.md"
   SetOutPath "$INSTDIR\testes"
   File "rt\testes\*.py"
@@ -45,7 +48,7 @@ Section "Gomos (obrigatório)" SecMain
   WriteRegStr HKCU "${UK}" "DisplayName" "Gomos — conversor de arquivos"
   WriteRegStr HKCU "${UK}" "DisplayIcon" "$INSTDIR\gomos.ico"
   WriteRegStr HKCU "${UK}" "Publisher" "Rabisco"
-  WriteRegStr HKCU "${UK}" "DisplayVersion" "1.0"
+  WriteRegStr HKCU "${UK}" "DisplayVersion" "1.1"
   WriteRegStr HKCU "${UK}" "UninstallString" '"$INSTDIR\Desinstalar.exe"'
   WriteRegDWORD HKCU "${UK}" "NoModify" 1
   WriteRegDWORD HKCU "${UK}" "NoRepair" 1

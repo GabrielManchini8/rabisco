@@ -83,6 +83,58 @@ CASOS = [  # (origem, rótulo do gomo, extensão esperada, verificação)
     ("imagem", "Excel (XLSX)", "xlsx", xlsx_tem_imagem),
 ]
 
+OCR_LINHAS = [["4965", "CARLOS DANIEL SANTOS", "MG", "31999869305", "daniel.pocos@gmail.com", "ativa"],
+              ["4930", "CYNTIA APARECIDA", "MG", "31975222543", "cyntia@hotmail.com", "ativa"],
+              ["13794", "EDMILSON FELIX", "SP", "31982507097", "edmilson@gmail.com", "Número"]]
+
+def caso_ocr_tabela(d: Path):
+    """Print de planilha SEM linhas de grade → Excel com cada valor na sua célula (OCR)."""
+    from PIL import Image, ImageDraw, ImageFont
+    fonte = None
+    for f in ("arial.ttf", "DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/arial.ttf"):
+        try: fonte = ImageFont.truetype(f, 15); break
+        except OSError: pass
+    xs = [10, 70, 300, 350, 470, 690]  # colunas alinhadas, sem bordas
+    im = Image.new("RGB", (780, 30 + 22 * len(OCR_LINHAS)), "white"); dr = ImageDraw.Draw(im)
+    for i, r in enumerate(OCR_LINHAS):
+        for x, v in zip(xs, r): dr.text((x, 12 + 22 * i), v, fill="black", font=fonte)
+    src = d / "print planilha.png"; im.save(src)
+    g = {r: f for _, r, f in c.gomos(src)}
+    out = g["Excel (XLSX)"](src)[0]
+    import openpyxl
+    ws = openpyxl.load_workbook(out).worksheets[0]
+    linhas = [[("" if v is None else str(v)).strip() for v in r] for r in ws.iter_rows(values_only=True)]
+    linhas = [[v for v in r if v] for r in linhas if any(r)]
+    erros = [f"esperado {esp} / veio {got}" for esp, got in zip(OCR_LINHAS, linhas) if esp != got]
+    if len(linhas) != len(OCR_LINHAS): erros.append(f"{len(linhas)} linhas, esperado {len(OCR_LINHAS)}")
+    return erros
+
+def caso_ocr_ajustes():
+    """Leituras reais do Tesseract em prints de planilha (dados fictícios com o mesmo padrão)."""
+    import ocr
+    erros = []
+    emails = {"fulanopocosQ gmail.com": "fulanopocos@gmail.com", "EMPRESAPOCOSGQHOTMAIL.COM": "EMPRESAPOCOS@HOTMAIL.COM",
+              "JOAO.SILVA2412(OGMAIL.COM": "JOAO.SILVA2412@GMAIL.COM", "RIBEIROPOCOSGGMAIL.COM": "RIBEIROPOCOS@GMAIL.COM",
+              "MGPOCOSARTOEGMAIL.COM": "MGPOCOSART@GMAIL.COM", "rm2091admç gmail.com": "rm2091adm@gmail.com",
+              "certo@gmail.com": "certo@gmail.com", "rm2091adm @gmail.com": "rm2091adm@gmail.com",
+              "ana @ hotmail.com": "ana@hotmail.com", "rm2091adm (gmail.com": "rm2091adm@gmail.com",
+              "35999058277 rm2091adm (gmail.com": "35999058277 rm2091adm@gmail.com", "MGPOCOSARTOGMAIL.COM": "MGPOCOSART@GMAIL.COM", "—": "", "|": "", "-": ""}
+    for lido, esperado in emails.items():
+        if ocr._limpar(lido) != esperado: erros.append(f"e-mail {lido!r} → {ocr._limpar(lido)!r}, esperado {esperado!r}")
+    # colunas grudadas no print: código+nome e telefone+e-mail
+    t = [["4965 CARLOS SANTOS", "MG", "31999869305 carlos@gmail.com"], ["4930 ANA LIMA", "MG", "31975222543"],
+         ["1815 JOSE LOPES 04496776642", "MG", "JOSE@HOTMAIL.COM"], ["13794 RITA PAZ", "SP", ""]]
+    esp = [["4965", "CARLOS SANTOS", "MG", "31999869305", "carlos@gmail.com"], ["4930", "ANA LIMA", "MG", "31975222543", ""],
+           ["1815", "JOSE LOPES 04496776642", "MG", "", "JOSE@HOTMAIL.COM"], ["13794", "RITA PAZ", "SP", "", ""]]
+    veio = ocr._separar_colunas(t)
+    if veio != esp: erros.append(f"colunas grudadas: veio {veio}")
+    # Tesseract 5.5 (Windows): telefone grudado no e-mail, mas a coluna de telefone já existe à esquerda
+    t2 = [["MG", "31999869305", "carlos@gmail.com"], ["MG", "31975222543", ""], ["MG", "", "35999058277 rm@gmail.com"]]
+    esp2 = [["MG", "31999869305", "carlos@gmail.com"], ["MG", "31975222543", ""], ["MG", "35999058277", "rm@gmail.com"]]
+    veio2 = ocr._separar_colunas(t2)
+    if veio2 != esp2: erros.append(f"telefone para a coluna existente: veio {veio2}")
+    return erros
+
 def caso_caracteres_invalidos(d: Path):
     """Regressão: PDFs em árabe trazem caracteres de controle que o Excel recusa."""
     import pymupdf
@@ -115,9 +167,21 @@ def main():
         else: falhas.append("pdf com caracteres de controle → Excel: conteúdo não confere")
     except Exception as e:
         falhas.append(f"pdf com caracteres de controle → Excel: ERRO {e}")
+    try:
+        erros = caso_ocr_ajustes()
+        if erros: falhas.append("OCR ajustes: " + " | ".join(erros[:4]))
+        else: print("  verde  OCR: e-mails mal lidos e colunas grudadas")
+    except Exception as e:
+        falhas.append(f"OCR ajustes: ERRO {type(e).__name__}: {e}")
+    try:
+        erros = caso_ocr_tabela(d)
+        if erros: falhas.append("imagem de tabela sem grade → Excel (OCR): " + " | ".join(erros[:3]))
+        else: print("  verde  imagem de tabela sem grade → Excel (OCR, célula por célula)")
+    except Exception as e:
+        falhas.append(f"imagem de tabela sem grade → Excel (OCR): ERRO {type(e).__name__}: {e}")
     if falhas:
         print("\nVERMELHO —", len(falhas), "falha(s):"); [print("  ✗", f) for f in falhas]; sys.exit(1)
-    print(f"\nVERDE — {len(CASOS) + 1}/{len(CASOS) + 1} conversões conferidas"); sys.exit(0)
+    print(f"\nVERDE — {len(CASOS) + 3}/{len(CASOS) + 3} conversões conferidas"); sys.exit(0)
 
 if __name__ == "__main__":
     main()
