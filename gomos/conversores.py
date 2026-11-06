@@ -434,6 +434,193 @@ def texto_pdf(src: Path) -> list[Path]:
         pg.insert_textbox(rect + (40, 40, -40, -40), "\n".join(linhas[i:i + 60]), fontsize=10)
     dst = saida(src, "pdf"); doc.save(dst); doc.close(); return [dst]
 
+# ---------------------------------------------------------------- cruzadas: PDF ⇄ Word ⇄ Excel ⇄ Imagem
+def _numero(v):
+    """'12' → 12, '340,50' / '340.50' → 340.5 (Excel entende como número); o resto fica texto."""
+    if not isinstance(v, str):
+        return v
+    t = v.strip().replace("R$", "").strip()
+    try:
+        if t and t.replace(".", "").replace(",", "").replace("-", "").isdigit():
+            if "," in t:
+                t = t.replace(".", "").replace(",", ".")
+            return int(t) if t.lstrip("-").isdigit() else float(t)
+    except ValueError:
+        pass
+    return v.strip()
+
+def _salvar_xlsx(folhas: list[tuple[str, list[list]]], dst: Path):
+    import openpyxl
+    from openpyxl.styles import Font
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    usados = set()
+    for nome, linhas in folhas or [("Planilha", [[""]])]:
+        nome = (str(nome)[:28] or "Planilha")
+        base, i = nome, 2
+        while nome in usados:
+            nome = f"{base} {i}"; i += 1
+        usados.add(nome)
+        ws = wb.create_sheet(nome)
+        from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+        for r in linhas:  # remove caracteres de controle que o Excel não aceita (comum em PDFs em árabe)
+            ws.append([ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v for v in (_numero(x) for x in r)])
+        if linhas:
+            for cel in ws[1]:
+                cel.font = Font(bold=True)
+        for col in ws.columns:  # largura automática
+            ws.column_dimensions[col[0].column_letter].width = min(60, max(8, *(len(str(x.value or "")) + 2 for x in col)))
+    wb.save(dst)
+
+def pdf_excel(src: Path) -> list[Path]:
+    """PDF → Excel: cada tabela do PDF vira uma aba; sem tabelas, cada linha de texto vira uma linha."""
+    folhas = []
+    with abrir_pdf(src) as doc:
+        for n, pg in enumerate(doc, 1):
+            try:
+                tabelas = pg.find_tables().tables
+            except Exception:
+                tabelas = []
+            for k, t in enumerate(tabelas, 1):
+                # texto lido pela área de cada célula (o extract() às vezes quebra palavras no meio)
+                linhas = []
+                for r in t.rows:
+                    linhas.append([" ".join(pg.get_text("text", clip=cel).split()) if cel else "" for cel in r.cells])
+                if any(any(c for c in r) for r in linhas):
+                    folhas.append((f"Pág {n} tabela {k}", linhas))
+        if not folhas:  # PDF sem tabela desenhada: colunas separadas por espaços largos
+            import re
+            for n, pg in enumerate(doc, 1):
+                linhas = [re.split(r"\s{2,}|\t", l.strip()) for l in pg.get_text().splitlines() if l.strip()]
+                if linhas:
+                    folhas.append((f"Pág {n}", linhas))
+    if not folhas:
+        AVISOS.append(f"{src.name}: PDF sem texto (escaneado) — planilha vazia")
+    dst = saida(src, "xlsx"); _salvar_xlsx(folhas, dst); return [dst]
+
+def _como_docx(src: Path) -> Path:
+    """DOC/ODT/RTF → DOCX temporário (via WordCraft ou LibreOffice) para ler tabelas."""
+    if src.suffix.lower() == ".docx":
+        return src
+    tmp = Path(tempfile.mkdtemp()) / (src.stem + ".docx")
+    exe = wordcraft()
+    if exe:
+        subprocess.run([exe, "convert", str(src), str(tmp)], capture_output=True, creationflags=0x08000000 if os.name == "nt" else 0)
+    elif _soffice():
+        subprocess.run([_soffice(), "--headless", "--convert-to", "docx", "--outdir", str(tmp.parent), str(src)], capture_output=True)
+    if not tmp.exists():
+        raise RuntimeError("para ler .doc/.odt/.rtf é preciso o WordCraft ou o LibreOffice")
+    return tmp
+
+def word_excel(src: Path) -> list[Path]:
+    """Word → Excel: cada tabela do documento vira uma aba; sem tabelas, os parágrafos viram linhas."""
+    import docx
+    d = docx.Document(_como_docx(src))
+    folhas = [(f"Tabela {i}", [[cel.text.strip() for cel in r.cells] for r in t.rows]) for i, t in enumerate(d.tables, 1)]
+    if not folhas:
+        folhas = [("Texto", [[p.text] for p in d.paragraphs if p.text.strip()])]
+    dst = saida(src, "xlsx"); _salvar_xlsx(folhas, dst); return [dst]
+
+def _pdf_temp(fn, src: Path) -> Path:
+    """Roda uma conversão que gera PDF numa pasta temporária (para depois virar imagem)."""
+    tmpdir = Path(tempfile.mkdtemp()); tmp_src = tmpdir / src.name
+    shutil.copy2(src, tmp_src)
+    return fn(tmp_src)[0]
+
+def _paginas_png(pdf: Path, src: Path) -> list[Path]:
+    pymupdf = _pdf(); out = []
+    with pymupdf.open(pdf) as doc:
+        for i, pg in enumerate(doc, 1):
+            dst = saida(src, "png", f" - pág {i}" if doc.page_count > 1 else "")
+            pg.get_pixmap(dpi=150).save(dst); out.append(dst)
+    return out
+
+def word_paginas(src: Path) -> list[Path]:
+    return _paginas_png(_pdf_temp(word_pdf, src), src)
+
+def _tabelas_html(src: Path) -> str:
+    import html
+    partes = []
+    for nome, linhas in _ler_planilha(src).items():
+        linhas = [r for r in linhas if any(v not in (None, "") for v in r)]
+        if not linhas:
+            continue
+        cab = "".join(f"<th>{html.escape(str('' if v is None else v))}</th>" for v in linhas[0])
+        corpo = "".join("<tr>" + "".join(f"<td>{html.escape(str('' if v is None else v))}</td>" for v in r) + "</tr>" for r in linhas[1:])
+        partes.append(f"<h2>{html.escape(str(nome))}</h2><table><tr>{cab}</tr>{corpo}</table>")
+    return "".join(partes) or "<p>(planilha vazia)</p>"
+
+def excel_pdf(src: Path) -> list[Path]:
+    """Excel/CSV → PDF: cada aba vira uma tabela, páginas A4 deitadas, quebra automática."""
+    pymupdf = _pdf()
+    css = ("body{font-family:sans-serif;font-size:9pt} h2{font-size:12pt;margin:8pt 0 4pt 0} table{border-collapse:collapse;width:100%}"
+           " th{background:#ffe8cc;font-weight:bold} th,td{border:1px solid #999;padding:2px 4px}")
+    story = pymupdf.Story(html=f"<body>{_tabelas_html(src)}</body>", user_css=css)
+    dst = saida(src, "pdf"); w = pymupdf.DocumentWriter(str(dst))
+    pagina = pymupdf.paper_rect("a4-l"); area = pagina + (36, 36, -36, -36); mais = True
+    while mais:
+        dev = w.begin_page(pagina); mais, _ = story.place(area); story.draw(dev); w.end_page()
+    w.close(); return [dst]
+
+def excel_word(src: Path) -> list[Path]:
+    """Excel/CSV → Word: cada aba vira um título + tabela formatada."""
+    import docx
+    from docx.enum.section import WD_ORIENT
+    d = docx.Document()
+    sec = d.sections[0]; sec.orientation = WD_ORIENT.LANDSCAPE; sec.page_width, sec.page_height = sec.page_height, sec.page_width
+    for nome, linhas in _ler_planilha(src).items():
+        linhas = [r for r in linhas if any(v not in (None, "") for v in r)]
+        if not linhas:
+            continue
+        d.add_heading(str(nome), 2)
+        ncol = max(len(r) for r in linhas)
+        t = d.add_table(rows=len(linhas), cols=ncol); t.style = "Table Grid"
+        for i, r in enumerate(linhas):
+            for j in range(ncol):
+                v = r[j] if j < len(r) else ""
+                t.cell(i, j).text = "" if v is None else str(v)
+                if i == 0:
+                    for run in t.cell(i, j).paragraphs[0].runs:
+                        run.bold = True
+    dst = saida(src, "docx"); d.save(dst); return [dst]
+
+def excel_imagem(src: Path) -> list[Path]:
+    return _paginas_png(_pdf_temp(excel_pdf, src), src)
+
+def _png_temp(src: Path) -> Path:
+    im = _abrir_imagem(src)
+    tmp = Path(tempfile.mkdtemp()) / (src.stem + ".png")
+    (im if im.mode in ("RGB", "RGBA", "L") else im.convert("RGBA")).save(tmp)
+    return tmp
+
+def img_word(src: Path) -> list[Path]:
+    """Imagem → Word: a foto ocupando a largura da página (para anotar/imprimir)."""
+    import docx
+    from docx.shared import Inches
+    from PIL import Image
+    png = _png_temp(src)
+    with Image.open(png) as im:
+        deitada = im.width > im.height
+    d = docx.Document()
+    if deitada:
+        from docx.enum.section import WD_ORIENT
+        sec = d.sections[0]; sec.orientation = WD_ORIENT.LANDSCAPE; sec.page_width, sec.page_height = sec.page_height, sec.page_width
+    d.add_picture(str(png), width=Inches(9 if deitada else 6.3))
+    d.add_paragraph(src.name)
+    dst = saida(src, "docx"); d.save(dst); return [dst]
+
+def img_excel(src: Path) -> list[Path]:
+    """Imagem → Excel: a imagem inserida na planilha (célula A1), com o nome do arquivo."""
+    import openpyxl
+    from openpyxl.drawing.image import Image as XImg
+    png = _png_temp(src)
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Imagem"
+    ws["A1"] = src.name
+    img = XImg(str(png))
+    if img.width > 900:  # cabe na tela
+        k = 900 / img.width; img.width, img.height = int(img.width * k), int(img.height * k)
+    ws.add_image(img, "A2")
+    dst = saida(src, "xlsx"); wb.save(dst); return [dst]
+
 # ---------------------------------------------------------------- catálogo de gomos
 Gomo = tuple[str, str, Callable[[Path], list[Path]]]  # (ícone, rótulo, ação)
 
@@ -444,6 +631,7 @@ def gomos(p: Path) -> list[Gomo]:
         alvos = [("📷", "JPG", "jpg"), ("🖼", "PNG", "png"), ("🪶", "WEBP", "webp"), ("📱", "HEIC", "heic"), ("🗂", "TIFF", "tiff"),
                  ("🧱", "BMP", "bmp"), ("✨", "AVIF", "avif"), ("🎞", "GIF", "gif"), ("🔖", "ICO", "ico"), ("📄", "PDF", "pdf")]
         g = [(i, r, img_para(x)) for i, r, x in alvos if x != e and not (x == "jpg" and e in ("jpeg", "jfif")) and not (x == "tiff" and e == "tif")]
+        g += [("📘", "Word (DOCX)", img_word), ("📊", "Excel (XLSX)", img_excel)]
         return g + [("↘", "Reduzir 50%", img_para("mesmo", 0.5, " - 50%")), ("🕶", "Sem metadados", img_para("mesmo", 1, " - limpo", limpar=True))]
     if t == "audio":
         g = [("🎵", "MP3", av("mp3")), ("〰", "WAV", av("wav")), ("🍏", "M4A", av("m4a")), ("🔊", "OGG", av("ogg")),
@@ -456,16 +644,17 @@ def gomos(p: Path) -> list[Gomo]:
         return [x for x in g if x[1].lower() != e]
     if t == "pdf":
         extra = [("🔓", "Remover senha", pdf_sem_senha)] if pdf_tem_senha(p) else []
-        return extra + [("📘", "Word (DOCX)", pdf_word), ("🖼", "Páginas PNG", pdf_imagens("png")), ("📷", "Páginas JPG", pdf_imagens("jpg")), ("📝", "Texto TXT", pdf_texto),
+        return extra + [("📘", "Word (DOCX)", pdf_word), ("📊", "Excel (XLSX)", pdf_excel), ("🖼", "Páginas PNG", pdf_imagens("png")), ("📷", "Páginas JPG", pdf_imagens("jpg")), ("📝", "Texto TXT", pdf_texto),
                 ("🗜", "Comprimir", pdf_comprimir), ("✂", "Dividir", pdf_dividir), ("↻", "Girar 90°", pdf_girar)]
     if t in ("planilha", "csv"):
-        g = [("🧾", "CSV", plan_csv), ("📊", "XLSX", plan_xlsx), ("{ }", "JSON", plan_json), ("🌐", "HTML", plan_html)]
+        g = [("📄", "PDF", excel_pdf), ("📘", "Word (DOCX)", excel_word), ("🖼", "Imagem PNG", excel_imagem),
+             ("🧾", "CSV", plan_csv), ("📊", "XLSX", plan_xlsx), ("{ }", "JSON", plan_json), ("🌐", "HTML", plan_html)]
         return [x for x in g if x[1].lower() != e]
     if t == "word":
-        g = [("📄", "PDF", word_pdf)]
+        g = [("📄", "PDF", word_pdf), ("📊", "Excel (XLSX)", word_excel), ("🖼", "Páginas PNG", word_paginas)]
         if wordcraft():  # todas as derivações de documento
             g += [(i, r, wc_converter(x)) for i, r, x in [("📘", "DOCX", "docx"), ("📗", "ODT", "odt"), ("📙", "RTF", "rtf"),
-                  ("🌐", "HTML", "html"), ("Ⓜ", "Markdown", "md"), ("📝", "TXT", "txt"), ("🖼", "Imagem PNG", "png")] if x != e]
+                  ("🌐", "HTML", "html"), ("Ⓜ", "Markdown", "md"), ("📝", "TXT", "txt")] if x != e]
             g.append(("✍", "PDF c/ revisões", wc_converter("pdf", " - revisões", ["--markup"])))  # comentários e alterações controladas
             return g
         return g + ([("📝", "TXT", word_texto("txt")), ("Ⓜ", "Markdown", word_texto("md"))] if e == "docx" else [])

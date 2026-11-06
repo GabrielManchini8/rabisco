@@ -13,12 +13,12 @@ Para remover: **desinstalar.bat**.
 ## O que converte (tudo local, sem internet)
 | Arquivo | Gomos |
 |---|---|
-| Fotos: JPG, PNG, WEBP, **HEIC**, TIFF, BMP, **AVIF**, GIF, ICO, PSD… | JPG, PNG, WEBP, HEIC, TIFF, BMP, AVIF, GIF, ICO, PDF, Reduzir 50%, Sem metadados (remove GPS/câmera) |
+| Fotos: JPG, PNG, WEBP, **HEIC**, TIFF, BMP, **AVIF**, GIF, ICO, PSD… | JPG, PNG, WEBP, HEIC, TIFF, BMP, AVIF, GIF, ICO, PDF, **Word**, **Excel**, Reduzir 50%, Sem metadados (remove GPS/câmera) |
 | Áudio: MP3, WAV, M4A, AAC, OGG, OPUS, FLAC, **WMA**, AMR, AIFF… | MP3, WAV, M4A, OGG, OPUS, FLAC |
 | Vídeo: MP4, MOV, **AVI**, MKV, WMV, FLV, 3GP, WEBM, MPEG… | MP4, MP4 leve (WhatsApp), WEBM, MOV, AVI, MKV, GIF, Áudio MP3/WAV, 1º quadro |
-| PDF | **Remover senha** (se tiver), **Word (DOCX)** editável, Páginas PNG/JPG, Texto, Comprimir, Dividir, Girar 90° |
-| Excel (XLSX, XLS), CSV | CSV, XLSX, JSON, HTML |
-| Word (DOCX, DOC, ODT, RTF) | **PDF**, DOCX, ODT, RTF, HTML, Markdown, TXT, Imagem PNG, **PDF com revisões** (comentários e alterações controladas) |
+| PDF | **Remover senha** (se tiver), **Word (DOCX)** editável, **Excel (XLSX)** (tabelas viram abas), Páginas PNG/JPG, Texto, Comprimir, Dividir, Girar 90° |
+| Excel (XLSX, XLS), CSV | **PDF**, **Word (DOCX)**, **Imagem PNG**, CSV, XLSX, JSON, HTML |
+| Word (DOCX, DOC, ODT, RTF) | **PDF**, **Excel** (tabelas do documento), **Páginas PNG**, DOCX, ODT, RTF, HTML, Markdown, TXT, Imagem PNG, **PDF com revisões** (comentários e alterações controladas) |
 | Texto/Markdown | PDF, **Word (DOCX)**, ODT, HTML |
 
 Selecionou **vários arquivos do mesmo tipo**? Um único anel converte todos de uma vez.
@@ -35,3 +35,7 @@ O Gomos pede a senha na hora e oferece o gomo **Remover senha** (gera uma cópia
 ## Créditos
 - [WordCraft](https://github.com/storytold/wordcraft) (MIT/Apache-2.0) — conversão de documentos Word/ODT/RTF/Markdown, baixado pelo instalador.
 - Testado com os acervos [py-pdf/sample-files](https://github.com/py-pdf/sample-files) (38 PDFs: senha, formulários, árabe, imagens, escaneados) e [felixlimanta/sample-docx-repo](https://github.com/felixlimanta/sample-docx-repo). Para repetir: `python testes/testar_pasta.py <pasta>`.
+
+## Portão de qualidade
+`python testes/portao.py` gera arquivos de teste e confere, **abrindo cada resultado**, as conversões cruzadas
+PDF ⇄ Word ⇄ Excel ⇄ Imagem (o texto da tabela precisa chegar inteiro do outro lado). Saída 0 = tudo certo.
