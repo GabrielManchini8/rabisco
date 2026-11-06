@@ -125,6 +125,18 @@ def anel(arquivos: list[Path]):
         for tag, *_ in itens:
             c.itemconfig(tag, state="disabled")
 
+        def pedir_senha(nome):
+            r = {}
+            ev = threading.Event()
+            def perguntar():
+                from tkinter import simpledialog
+                r["s"] = simpledialog.askstring("Gomos", f"{nome} tem senha.\nDigite a senha do PDF:", show="•", parent=root)
+                ev.set()
+            root.after(0, perguntar); ev.wait()
+            return r.get("s")
+        cv.PEDIR_SENHA = pedir_senha
+        cv.AVISOS.clear()
+
         def trabalho():
             gerados, erros = [], []
             for a in arquivos:
@@ -143,6 +155,9 @@ def anel(arquivos: list[Path]):
         if erros:
             root.withdraw()
             messagebox.showerror("Gomos", "Não consegui converter:\n\n" + "\n".join(erros[:8]))
+        if cv.AVISOS:
+            root.withdraw()
+            messagebox.showwarning("Gomos", "Convertido, com observações:\n\n" + "\n".join(cv.AVISOS[:8]))
         if gerados:
             c.itemconfig(miolo, fill="#2f9e44"); c.itemconfig(txt_miolo, text="✓", font=("Segoe UI", 20, "bold"))
             mostrar_no_explorer(gerados[0])

@@ -39,6 +39,11 @@ def ffmpeg(src: Path, dst: Path, args: list[str]) -> Path:
         raise RuntimeError(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "ffmpeg falhou")
     return dst
 
+# ---------------------------------------------------------------- avisos e senha
+AVISOS: list[str] = []          # avisos não fatais (o arquivo foi gerado, mas…); a interface mostra no fim
+PEDIR_SENHA = None              # a interface troca por uma função (nome_do_arquivo) -> senha | None
+_SENHAS: dict[str, str] = {}
+
 # ---------------------------------------------------------------- tipos
 IMG = {"jpg", "jpeg", "jfif", "png", "webp", "heic", "heif", "tif", "tiff", "bmp", "gif", "avif", "ico", "psd", "tga", "dds", "pcx", "jp2"}
 AUD = {"mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac", "wma", "amr", "aiff", "aif", "caf", "ac3"}
@@ -48,6 +53,7 @@ XLS = {"xlsx", "xlsm", "xls", "ods"}
 CSV = {"csv", "tsv"}
 DOC = {"docx", "doc", "odt", "rtf"}
 TXT = {"txt", "md", "markdown", "json", "log"}
+HTM = {"html", "htm"}
 
 def tipo(p: Path) -> str:
     e = p.suffix.lower().lstrip(".")
@@ -139,11 +145,37 @@ def _pdf():
     import pymupdf
     return pymupdf
 
+def abrir_pdf(src: Path):
+    """Abre o PDF; se tiver senha, pede uma vez (e lembra durante esta execução)."""
+    pymupdf = _pdf()
+    doc = pymupdf.open(src)
+    if doc.needs_pass:
+        senha = _SENHAS.get(str(src)) or (PEDIR_SENHA(src.name) if PEDIR_SENHA else None)
+        if not senha or not doc.authenticate(senha):
+            doc.close(); raise RuntimeError("PDF protegido por senha (senha não informada ou incorreta)")
+        _SENHAS[str(src)] = senha
+    if doc.page_count == 0:
+        doc.close(); raise RuntimeError("PDF sem páginas legíveis (arquivo danificado)")
+    return doc
+
+def pdf_tem_senha(src: Path) -> bool:
+    try:
+        with _pdf().open(src) as d:
+            return d.needs_pass
+    except Exception:
+        return False
+
+def pdf_sem_senha(src: Path) -> list[Path]:
+    dst = saida(src, "pdf", " - sem senha")
+    with abrir_pdf(src) as doc:
+        doc.save(dst, encryption=_pdf().PDF_ENCRYPT_NONE)
+    return [dst]
+
 def pdf_imagens(ext: str) -> Callable[[Path], list[Path]]:
     def run(src: Path) -> list[Path]:
         pymupdf = _pdf()
         out = []
-        with pymupdf.open(src) as doc:
+        with abrir_pdf(src) as doc:
             for i, pg in enumerate(doc, 1):
                 pix = pg.get_pixmap(dpi=150)
                 dst = saida(src, ext, f" - pág {i}")
@@ -153,15 +185,14 @@ def pdf_imagens(ext: str) -> Callable[[Path], list[Path]]:
     return run
 
 def pdf_texto(src: Path) -> list[Path]:
-    pymupdf = _pdf()
-    with pymupdf.open(src) as doc:
+    with abrir_pdf(src) as doc:
         txt = "\n\n".join(f"--- Página {i} ---\n{pg.get_text()}" for i, pg in enumerate(doc, 1))
     dst = saida(src, "txt"); dst.write_text(txt, encoding="utf-8"); return [dst]
 
 def pdf_comprimir(src: Path) -> list[Path]:
     pymupdf = _pdf()
     dst = saida(src, "pdf", " - comprimido")
-    with pymupdf.open(src) as doc:
+    with abrir_pdf(src) as doc:
         try:  # reduz imagens internas para 150 dpi
             doc.rewrite_images(dpi_threshold=200, dpi_target=150, quality=75)
         except Exception:
@@ -172,7 +203,7 @@ def pdf_comprimir(src: Path) -> list[Path]:
 def pdf_dividir(src: Path) -> list[Path]:
     pymupdf = _pdf()
     out = []
-    with pymupdf.open(src) as doc:
+    with abrir_pdf(src) as doc:
         for i in range(doc.page_count):
             novo = pymupdf.open(); novo.insert_pdf(doc, from_page=i, to_page=i)
             dst = saida(src, "pdf", f" - pág {i + 1}"); novo.save(dst); novo.close(); out.append(dst)
@@ -181,7 +212,7 @@ def pdf_dividir(src: Path) -> list[Path]:
 def pdf_girar(src: Path) -> list[Path]:
     pymupdf = _pdf()
     dst = saida(src, "pdf", " - girado")
-    with pymupdf.open(src) as doc:
+    with abrir_pdf(src) as doc:
         for pg in doc:
             pg.set_rotation((pg.rotation + 90) % 360)
         doc.save(dst)
@@ -266,8 +297,40 @@ def _soffice() -> str | None:
             return c
     return None
 
+def wordcraft() -> str | None:
+    """WordCraft (editor de Word livre, em Rust): converte DOCX/DOC/ODT/RTF/MD/HTML sem Word nem LibreOffice."""
+    aqui = Path(__file__).resolve().parent
+    nomes = ["wordcraft-cli.exe", "wordcraft-cli"]
+    locais = [aqui / "wordcraft" / n for n in nomes] + [aqui / n for n in nomes]
+    if os.name == "nt":
+        locais.append(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "ArtCraft" / "WordCraft" / "wordcraft-cli.exe")
+        locais.append(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "ArtCraft" / "WordCraft" / "wordcraft-cli.exe")
+    for c in locais:
+        if c.exists():
+            return str(c)
+    pasta = aqui / "wordcraft"  # o zip portátil pode vir com uma subpasta
+    if pasta.is_dir():
+        for c in pasta.rglob("wordcraft-cli*"):
+            if c.is_file() and c.suffix.lower() in ("", ".exe"):
+                return str(c)
+    return shutil.which("wordcraft-cli")
+
+def wc_converter(ext: str, sufixo: str = "", extra: list[str] | None = None) -> Callable[[Path], list[Path]]:
+    def run(src: Path) -> list[Path]:
+        exe = wordcraft()
+        if not exe:
+            raise RuntimeError("WordCraft não instalado (rode o instalar.bat de novo)")
+        dst = saida(src, ext, sufixo)
+        flags = 0x08000000 if os.name == "nt" else 0
+        r = subprocess.run([exe, "convert", str(src), str(dst), *(extra or [])], capture_output=True, text=True, creationflags=flags, timeout=300)
+        if r.returncode != 0 or not dst.exists():
+            dst.unlink(missing_ok=True)
+            raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else "WordCraft falhou")
+        return [dst]
+    return run
+
 def word_pdf(src: Path) -> list[Path]:
-    """Word → PDF. Usa o melhor disponível: 1) Microsoft Word, 2) LibreOffice, 3) conversor próprio (sem nada instalado)."""
+    """Word → PDF. Usa o melhor disponível: 1) Microsoft Word, 2) WordCraft, 3) LibreOffice, 4) conversor próprio."""
     dst = saida(src, "pdf")
     if os.name == "nt":  # 1) Word instalado → fidelidade total
         try:
@@ -277,7 +340,13 @@ def word_pdf(src: Path) -> list[Path]:
                 return [dst]
         except Exception:
             pass
-    so = _soffice()  # 2) LibreOffice (grátis) → quase idêntico ao Word
+    if wordcraft():  # 2) WordCraft (vem com o Gomos) → fiel ao Word, rápido, sem instalar nada
+        try:
+            dst.unlink(missing_ok=True)
+            return wc_converter("pdf")(src)
+        except Exception:
+            dst = saida(src, "pdf")
+    so = _soffice()  # 3) LibreOffice (grátis) → quase idêntico ao Word
     if so:
         tmp = Path(tempfile.mkdtemp())
         flags = 0x08000000 if os.name == "nt" else 0
@@ -287,8 +356,8 @@ def word_pdf(src: Path) -> list[Path]:
             shutil.move(str(gerado), dst); shutil.rmtree(tmp, ignore_errors=True); return [dst]
         shutil.rmtree(tmp, ignore_errors=True)
     if src.suffix.lower() != ".docx":
-        raise RuntimeError("para .doc/.odt/.rtf instale o LibreOffice (grátis) ou tenha o Word")
-    # 3) sem Word nem LibreOffice: DOCX → HTML (títulos, negrito, listas, tabelas, imagens) → PDF A4
+        raise RuntimeError("para .doc/.odt/.rtf é preciso o WordCraft, o LibreOffice ou o Word")
+    # 4) sem Word nem LibreOffice: DOCX → HTML (títulos, negrito, listas, tabelas, imagens) → PDF A4
     import mammoth, base64, re
     with open(src, "rb") as f:
         html = mammoth.convert_to_html(f).value
@@ -317,19 +386,41 @@ def word_pdf(src: Path) -> list[Path]:
 
 def pdf_word(src: Path) -> list[Path]:
     """PDF → Word (.docx) editável, mantendo parágrafos, tabelas, imagens e o layout das páginas."""
-    from pdf2docx import Converter
     import logging
-    logging.getLogger().setLevel(logging.ERROR)
+    logging.disable(logging.CRITICAL)
+    with abrir_pdf(src) as d:  # valida senha/páginas antes e detecta PDF escaneado
+        escaneado = not any(pg.get_text().strip() for pg in d)
     dst = saida(src, "docx")
-    cv = Converter(str(src))
     try:
-        cv.convert(str(dst))
-    finally:
-        cv.close()
-    with _pdf().open(src) as d:  # PDF escaneado (só imagem) → avisa que o texto não fica editável
-        if not any(pg.get_text().strip() for pg in d):
-            raise RuntimeError("PDF escaneado: o Word foi gerado, mas o texto é imagem (precisa de OCR)")
+        from pdf2docx import Converter
+        cv = Converter(str(src), password=_SENHAS.get(str(src)))
+        try:
+            cv.convert(str(dst))
+        finally:
+            cv.close()
+    except Exception:
+        dst.unlink(missing_ok=True)
+        _pdf_word_simples(src, dst)  # plano B: texto por página + imagem da página
+        AVISOS.append(f"{src.name}: layout complexo — gerei um Word simplificado (texto + imagem de cada página)")
+    if escaneado:
+        AVISOS.append(f"{src.name}: PDF escaneado — o Word tem as páginas como imagem (texto não editável sem OCR)")
     return [dst]
+
+def _pdf_word_simples(src: Path, dst: Path):
+    import docx, io
+    from docx.shared import Inches
+    d = docx.Document()
+    with abrir_pdf(src) as doc:
+        for i, pg in enumerate(doc):
+            if i:
+                d.add_page_break()
+            texto = pg.get_text().strip()
+            for par in [p for p in texto.split("\n\n") if p.strip()]:
+                d.add_paragraph(par.replace("\n", " "))
+            if not texto or pg.get_images():
+                png = pg.get_pixmap(dpi=110).tobytes("png")
+                d.add_picture(io.BytesIO(png), width=Inches(6))
+    d.save(dst)
 
 def texto_pdf(src: Path) -> list[Path]:
     pymupdf = _pdf()
@@ -364,14 +455,23 @@ def gomos(p: Path) -> list[Gomo]:
              ("🎵", "Áudio MP3", av("mp3", "mp3")), ("〰", "Áudio WAV", av("wav", "wav")), ("📷", "1º quadro", primeiro_quadro)]
         return [x for x in g if x[1].lower() != e]
     if t == "pdf":
-        return [("📘", "Word (DOCX)", pdf_word), ("🖼", "Páginas PNG", pdf_imagens("png")), ("📷", "Páginas JPG", pdf_imagens("jpg")), ("📝", "Texto TXT", pdf_texto),
+        extra = [("🔓", "Remover senha", pdf_sem_senha)] if pdf_tem_senha(p) else []
+        return extra + [("📘", "Word (DOCX)", pdf_word), ("🖼", "Páginas PNG", pdf_imagens("png")), ("📷", "Páginas JPG", pdf_imagens("jpg")), ("📝", "Texto TXT", pdf_texto),
                 ("🗜", "Comprimir", pdf_comprimir), ("✂", "Dividir", pdf_dividir), ("↻", "Girar 90°", pdf_girar)]
     if t in ("planilha", "csv"):
         g = [("🧾", "CSV", plan_csv), ("📊", "XLSX", plan_xlsx), ("{ }", "JSON", plan_json), ("🌐", "HTML", plan_html)]
         return [x for x in g if x[1].lower() != e]
     if t == "word":
         g = [("📄", "PDF", word_pdf)]
+        if wordcraft():  # todas as derivações de documento
+            g += [(i, r, wc_converter(x)) for i, r, x in [("📘", "DOCX", "docx"), ("📗", "ODT", "odt"), ("📙", "RTF", "rtf"),
+                  ("🌐", "HTML", "html"), ("Ⓜ", "Markdown", "md"), ("📝", "TXT", "txt"), ("🖼", "Imagem PNG", "png")] if x != e]
+            g.append(("✍", "PDF c/ revisões", wc_converter("pdf", " - revisões", ["--markup"])))  # comentários e alterações controladas
+            return g
         return g + ([("📝", "TXT", word_texto("txt")), ("Ⓜ", "Markdown", word_texto("md"))] if e == "docx" else [])
     if t == "texto":
-        return [("📄", "PDF", texto_pdf)]
+        g = [("📄", "PDF", texto_pdf)]
+        if wordcraft() and e in ("md", "markdown", "txt"):
+            g = [("📄", "PDF", wc_converter("pdf")), ("📘", "Word (DOCX)", wc_converter("docx")), ("📗", "ODT", wc_converter("odt")), ("🌐", "HTML", wc_converter("html"))]
+        return g
     return []

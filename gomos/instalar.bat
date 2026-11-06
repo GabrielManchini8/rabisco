@@ -35,6 +35,11 @@ copy /y "%~dp0conversores.py" "%DEST%\" >nul
 copy /y "%~dp0gomos.ico" "%DEST%\" >nul
 copy /y "%~dp0desinstalar.bat" "%DEST%\" >nul
 
+REM 3b) WordCraft: Word/ODT/RTF -> PDF e outros, sem precisar do Word nem do LibreOffice (opcional)
+echo   Baixando o WordCraft ^(conversor de documentos^)...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0baixar-wordcraft.ps1" -Destino "%DEST%\wordcraft"
+if errorlevel 1 echo   ^(nao consegui baixar o WordCraft agora; o Gomos funciona sem ele e voce pode rodar o instalador de novo depois^)
+
 REM 4) item "Converter" no botao direito de QUALQUER arquivo (so para o seu usuario, sem admin)
 set "K=HKCU\Software\Classes\*\shell\Gomos"
 reg add "%K%" /ve /d "Converter" /f >nul
