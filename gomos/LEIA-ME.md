@@ -16,9 +16,15 @@ Para remover: **desinstalar.bat**.
 | Fotos: JPG, PNG, WEBP, **HEIC**, TIFF, BMP, **AVIF**, GIF, ICO, PSD… | JPG, PNG, WEBP, HEIC, TIFF, BMP, AVIF, GIF, ICO, PDF, Reduzir 50%, Sem metadados (remove GPS/câmera) |
 | Áudio: MP3, WAV, M4A, AAC, OGG, OPUS, FLAC, **WMA**, AMR, AIFF… | MP3, WAV, M4A, OGG, OPUS, FLAC |
 | Vídeo: MP4, MOV, **AVI**, MKV, WMV, FLV, 3GP, WEBM, MPEG… | MP4, MP4 leve (WhatsApp), WEBM, MOV, AVI, MKV, GIF, Áudio MP3/WAV, 1º quadro |
-| PDF | Páginas PNG/JPG, Texto, Comprimir, Dividir, Girar 90° |
+| PDF | **Word (DOCX)** editável, Páginas PNG/JPG, Texto, Comprimir, Dividir, Girar 90° |
 | Excel (XLSX, XLS), CSV | CSV, XLSX, JSON, HTML |
-| Word (DOCX) | TXT, Markdown |
+| Word (DOCX, DOC, ODT, RTF) | **PDF**, TXT, Markdown |
 | Texto/Markdown | PDF |
 
 Selecionou **vários arquivos do mesmo tipo**? Um único anel converte todos de uma vez.
+
+### Word → PDF
+Usa o melhor que o computador tiver: **Microsoft Word** (idêntico) → **LibreOffice** (grátis, quase idêntico) → conversor próprio (sem nada instalado; mantém títulos, negrito, listas, tabelas e imagens). DOC/ODT/RTF precisam do Word ou do LibreOffice.
+
+### PDF → Word
+Gera um DOCX editável mantendo parágrafos, tabelas e imagens. PDF escaneado (foto de papel) vira Word com imagem — para texto editável precisaria de OCR.

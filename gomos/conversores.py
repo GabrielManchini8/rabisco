@@ -4,7 +4,7 @@ Cada tipo de arquivo tem uma lista de "gomos" (ações). Cada ação gera arquiv
 novo(s) ao lado do original, sem nunca sobrescrever nada.
 """
 from __future__ import annotations
-import os, subprocess, json, csv, shutil
+import os, subprocess, json, csv, shutil, tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -46,7 +46,7 @@ VID = {"mp4", "m4v", "mov", "avi", "mkv", "wmv", "flv", "3gp", "webm", "mpeg", "
 PDF = {"pdf"}
 XLS = {"xlsx", "xlsm", "xls", "ods"}
 CSV = {"csv", "tsv"}
-DOC = {"docx"}
+DOC = {"docx", "doc", "odt", "rtf"}
 TXT = {"txt", "md", "markdown", "json", "log"}
 
 def tipo(p: Path) -> str:
@@ -258,6 +258,79 @@ def word_texto(ext: str) -> Callable[[Path], list[Path]]:
         dst = saida(src, ext); dst.write_text("\n".join(linhas), encoding="utf-8"); return [dst]
     return run
 
+# ---------------------------------------------------------------- Word <-> PDF
+def _soffice() -> str | None:
+    for c in (shutil.which("soffice"), r"C:\Program Files\LibreOffice\program\soffice.exe",
+              r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"):
+        if c and Path(c).exists():
+            return c
+    return None
+
+def word_pdf(src: Path) -> list[Path]:
+    """Word → PDF. Usa o melhor disponível: 1) Microsoft Word, 2) LibreOffice, 3) conversor próprio (sem nada instalado)."""
+    dst = saida(src, "pdf")
+    if os.name == "nt":  # 1) Word instalado → fidelidade total
+        try:
+            from docx2pdf import convert
+            convert(str(src), str(dst))
+            if dst.exists():
+                return [dst]
+        except Exception:
+            pass
+    so = _soffice()  # 2) LibreOffice (grátis) → quase idêntico ao Word
+    if so:
+        tmp = Path(tempfile.mkdtemp())
+        flags = 0x08000000 if os.name == "nt" else 0
+        subprocess.run([so, "--headless", "--convert-to", "pdf", "--outdir", str(tmp), str(src)], capture_output=True, creationflags=flags, timeout=180)
+        gerado = tmp / (src.stem + ".pdf")
+        if gerado.exists():
+            shutil.move(str(gerado), dst); shutil.rmtree(tmp, ignore_errors=True); return [dst]
+        shutil.rmtree(tmp, ignore_errors=True)
+    if src.suffix.lower() != ".docx":
+        raise RuntimeError("para .doc/.odt/.rtf instale o LibreOffice (grátis) ou tenha o Word")
+    # 3) sem Word nem LibreOffice: DOCX → HTML (títulos, negrito, listas, tabelas, imagens) → PDF A4
+    import mammoth, base64, re
+    with open(src, "rb") as f:
+        html = mammoth.convert_to_html(f).value
+    pymupdf = _pdf()
+    imagens = {}
+    def _img(m):  # imagens embutidas viram arquivos do "arquivo virtual" do PyMuPDF
+        nome = f"img{len(imagens)}.{m.group(1).split('/')[-1]}"
+        imagens[nome] = base64.b64decode(m.group(2)); return f'src="{nome}"'
+    html = re.sub(r'src="data:(image/[a-z+]+);base64,([^"]+)"', _img, html)
+    css = ("body{font-family:sans-serif;font-size:11pt;line-height:1.35} h1{font-size:20pt} h2{font-size:16pt} h3{font-size:13pt}"
+           " table{border-collapse:collapse;width:100%} td,th{border:1px solid #888;padding:2px 4px} td p,th p{margin:0} p{margin:0 0 6pt 0} img{max-width:100%}")
+    arq = pymupdf.Archive()
+    for nome, dados in imagens.items():
+        arq.add(dados, nome)
+    story = pymupdf.Story(html=f"<body>{html}</body>", user_css=css, archive=arq)
+    escritor = pymupdf.DocumentWriter(str(dst))
+    a4 = pymupdf.paper_rect("a4"); area = a4 + (56, 56, -56, -56)
+    mais = True
+    while mais:
+        dispositivo = escritor.begin_page(a4)
+        mais, _ = story.place(area)
+        story.draw(dispositivo)
+        escritor.end_page()
+    escritor.close()
+    return [dst]
+
+def pdf_word(src: Path) -> list[Path]:
+    """PDF → Word (.docx) editável, mantendo parágrafos, tabelas, imagens e o layout das páginas."""
+    from pdf2docx import Converter
+    import logging
+    logging.getLogger().setLevel(logging.ERROR)
+    dst = saida(src, "docx")
+    cv = Converter(str(src))
+    try:
+        cv.convert(str(dst))
+    finally:
+        cv.close()
+    with _pdf().open(src) as d:  # PDF escaneado (só imagem) → avisa que o texto não fica editável
+        if not any(pg.get_text().strip() for pg in d):
+            raise RuntimeError("PDF escaneado: o Word foi gerado, mas o texto é imagem (precisa de OCR)")
+    return [dst]
+
 def texto_pdf(src: Path) -> list[Path]:
     pymupdf = _pdf()
     doc = pymupdf.open()
@@ -291,13 +364,14 @@ def gomos(p: Path) -> list[Gomo]:
              ("🎵", "Áudio MP3", av("mp3", "mp3")), ("〰", "Áudio WAV", av("wav", "wav")), ("📷", "1º quadro", primeiro_quadro)]
         return [x for x in g if x[1].lower() != e]
     if t == "pdf":
-        return [("🖼", "Páginas PNG", pdf_imagens("png")), ("📷", "Páginas JPG", pdf_imagens("jpg")), ("📝", "Texto TXT", pdf_texto),
+        return [("📘", "Word (DOCX)", pdf_word), ("🖼", "Páginas PNG", pdf_imagens("png")), ("📷", "Páginas JPG", pdf_imagens("jpg")), ("📝", "Texto TXT", pdf_texto),
                 ("🗜", "Comprimir", pdf_comprimir), ("✂", "Dividir", pdf_dividir), ("↻", "Girar 90°", pdf_girar)]
     if t in ("planilha", "csv"):
         g = [("🧾", "CSV", plan_csv), ("📊", "XLSX", plan_xlsx), ("{ }", "JSON", plan_json), ("🌐", "HTML", plan_html)]
         return [x for x in g if x[1].lower() != e]
     if t == "word":
-        return [("📝", "TXT", word_texto("txt")), ("Ⓜ", "Markdown", word_texto("md"))]
+        g = [("📄", "PDF", word_pdf)]
+        return g + ([("📝", "TXT", word_texto("txt")), ("Ⓜ", "Markdown", word_texto("md"))] if e == "docx" else [])
     if t == "texto":
         return [("📄", "PDF", texto_pdf)]
     return []
